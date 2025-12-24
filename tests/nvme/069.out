@@ -1,0 +1,11 @@
+Running nvme/069
+Starting background I/O
+Setting FC port to Marginal state
+Waiting for NVMe controller to detect marginal state...
+SUCCESS: NVMe controller is now marginal
+Setting FC port back to Online state
+Waiting for NVMe controller to return to live state...
+SUCCESS: NVMe controller is back to live state
+Stopping background I/O
+disconnected 1 controller(s)
+Test complete

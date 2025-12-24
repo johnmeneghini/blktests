@@ -1,0 +1,118 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0+
+# Copyright (C) 2024 John Meneghini <jmeneghi@redhat.com>
+#
+# Test nvme-fc marginal path handling with fcloop
+
+. tests/nvme/rc
+
+DESCRIPTION="test nvme-fc marginal path handling"
+
+requires() {
+	_nvme_requires
+	_have_loop
+	_have_fio
+	_require_nvme_trtype fc
+}
+
+set_conditions() {
+	_set_nvme_trtype "$@"
+}
+
+_wait_for_ctrl_state() {
+	local def_state_timeout=5
+	local nvmedev="$1"
+	local state="$2"
+	local timeout="${3:-$def_state_timeout}"
+	local state_file
+	local start_time
+	local end_time
+
+	state_file="/sys/class/nvme/${nvmedev}/state"
+
+	start_time=$(date +%s)
+	until grep -q "${state}" "${state_file}"; do
+		sleep 1
+		end_time=$(date +%s)
+		if (( end_time - start_time > timeout )); then
+			echo "expected state \"${state}\" not " \
+				"reached within ${timeout} seconds"
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+
+do_test() {
+	local nvmedev="$1"
+	local ns="$2"
+	local port=0
+	local fio_pid
+
+	# Verify initial controller state is online
+	_wait_for_ctrl_state "$nvmedev" "live" 0 || { echo "FAIL: Controller unexpectedly started as not online."; return 1; }
+
+	# Start background I/O
+	echo "Starting background I/O"
+	_run_fio_verify_io --filename="/dev/${ns}" \
+			   --group_reporting --ramp_time=5 \
+			   --time_based --runtime=3m --ioengine=libaio \
+			   --iodepth=32 --bs=4k --rw=randread &> "$FULL" &
+	fio_pid=$!
+	sleep 5
+
+	# Set FC port to Marginal state
+	echo "Setting FC port to Marginal state"
+	_setup_nvmet_port_marginal "$port" marginal
+
+	# Wait for NVMe controller to detect marginal state
+	echo "Waiting for NVMe controller to detect marginal state..."
+	if _wait_for_ctrl_state "$nvmedev" "marginal" 30; then
+		echo "SUCCESS: NVMe controller is now marginal"
+	else
+		echo "FAIL: NVMe controller did not change to marginal state"
+		return 1
+	fi
+
+	sleep 1
+
+	# Set FC port back to Online state
+	echo "Setting FC port back to Online state"
+	_setup_nvmet_port_marginal "$port" "live"
+
+	# Wait for controller to return to live state
+	echo "Waiting for NVMe controller to return to live state..."
+	if _wait_for_ctrl_state "$nvmedev" "live" 30; then
+		echo "SUCCESS: NVMe controller is back to live state"
+	else
+		echo "FAIL: NVMe controller did not change back to live state"
+	fi
+
+	# Stop background I/O
+	echo "Stopping background I/O"
+	{ kill "$fio_pid"; wait; } &> /dev/null
+}
+
+test() {
+	local nvmedev
+	local ns
+
+	echo "Running ${TEST_NAME}"
+
+	_setup_nvmet
+
+	_nvmet_target_setup --ports 1
+
+	_nvme_connect_subsys
+	nvmedev=$(_find_nvme_dev "${def_subsysnqn}")
+	ns=$(_find_nvme_ns "${def_subsys_uuid}")
+
+	do_test "$nvmedev" "$ns"
+
+	_nvme_disconnect_subsys
+	_nvmet_target_cleanup
+
+	echo "Test complete"
+}
