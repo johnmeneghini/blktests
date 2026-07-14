@@ -104,7 +104,7 @@ _nvme_fcloop_set_rport_marginal() {
 	local marginal="$3"
 	local loopctl=/sys/class/fcloop/ctl
 
-	echo "wwnn=${wwnn},wwpn=${wwpn},marginal=${marginal}" > ${loopctl}/set_marginal_rport
+	echo "wwnn=${wwnn},wwpn=${wwpn},marginal=${marginal}" > ${loopctl}/set_rport_marginal
 }
 
 _nvme_fcloop_del_rport() {
