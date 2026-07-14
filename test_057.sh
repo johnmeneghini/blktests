@@ -64,12 +64,13 @@ set -euo pipefail
 # ── Tunables ────────────────────────────────────────────────────────────────
 
 IMG_SIZE="1G"
-FIO_RUNTIME="1m"
-FIO_RAMP="5"
+FIO_RUNTIME="7m"
+FIO_RAMP="10"
 NUM_PORTS=4
 
 # ── Identity constants (matching blktests defaults) ─────────────────────────
 
+SESSION_NAME="test_057_mon"
 SUBSYSNQN="blktests-subsystem-1"
 SUBSYS_UUID="91fdba0d-f87b-4c25-b80f-db7be1418b9e"
 HOSTID="0f01fb42-9f7f-4856-b0b3-51e60b8de349"
@@ -87,6 +88,20 @@ TMPDIR=""
 LOOP_DEV=""
 
 # ── Helper functions ───────────────────────────────────────────────────────
+
+next_step() {
+        echo ""
+        echo -n "Type e to exit, any key to continue: "
+        read line
+        case "$line" in
+                e|E) echo "exit"
+                        exit 1
+                ;;
+                *) echo "continue"
+						return 0
+				;;
+        esac
+}
 
 die() {
 	echo "FAIL: $*" >&2
@@ -288,6 +303,22 @@ wait_for_ns() {
 	echo "${ns}"
 }
 
+create_tmux_session()  {
+	rm -f test_057_tmux.sh
+	cat << EOF >> test_057_tmux.sh
+#!/bin/bash
+tmux new-session -d -s "$SESSION_NAME" "watch -t -d 'nvme list-subsys /dev/${NS}'"
+tmux split-window -v -t "$SESSION_NAME" "iostat -x ID $(cat /proc/diskstats | grep "${CTRL}" | awk '{print $3}'  | sed -z 's/\n/ /g') 4"
+sleep 1
+echo ""
+echo "Using \"tmux attach\" to connect to tmux session"
+echo ""
+sleep 1
+tmux attach
+EOF
+	chmod 777 test_057_tmux.sh
+}
+
 # ── Cleanup (called on exit) ───────────────────────────────────────────────
 
 cleanup() {
@@ -421,8 +452,12 @@ echo "  Connected to ${NUM_PORTS} ports"
 # Wait for the multipath namespace to appear
 NS=$(wait_for_ns)
 echo "  Namespace found: /dev/${NS}"
+CTRL="${NS::-2}"
+echo "  Controller found: ${CTRL}"
 
 # ── 9. Start fio background I/O ──────────────────────────────────────────
+
+next_step
 
 fio --name=verify \
 	--rw=randwrite \
@@ -437,25 +472,59 @@ fio --name=verify \
 	--ramp_time="${FIO_RAMP}" \
 	--time_based \
 	--runtime="${FIO_RUNTIME}" \
-	--output="${TMPDIR}/fio.log" &
+	--output="${TMPDIR}/fio.log" > /dev/null 2>&1 &
 FIO_PID=$!
 echo "  fio started (pid=${FIO_PID}), runtime=${FIO_RUNTIME}"
 
-sleep 5
+sleep 2
+
+create_tmux_session
+
+echo ""
+echo "Use \"./test_057_tmux.sh\" to start tmux in separate window"
+echo ""
+
+next_step
 
 # ── 10. ANA failover ─────────────────────────────────────────────────────
 
 echo "ANA failover"
 ana_failover "${PORTS[@]}"
 
-sleep 10
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
 
 # ── 11. ANA failback ─────────────────────────────────────────────────────
 
 echo "ANA failback"
 ana_failback "${PORTS[@]}"
 
-sleep 10
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 10. ANA failover ─────────────────────────────────────────────────────
+
+echo "ANA failover"
+ana_failover "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 11. ANA failback ─────────────────────────────────────────────────────
+
+echo "ANA failback"
+ana_failback "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
 
 # ── 12. Stop fio ─────────────────────────────────────────────────────────
 
