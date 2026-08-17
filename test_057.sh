@@ -256,6 +256,42 @@ setup_port_ana() {
 	echo "${anastate}" > "${anapath}/ana_state"
 }
 
+# ── ANA state transition functions ─────────────────────────────────────────
+
+# Initial / failback state:
+#   port 0 = optimized, port 1 = non-optimized, ports 2+ = inaccessible
+ana_failback() {
+	local portno=0
+	local p
+	for p in "$@"; do
+		if (( portno == 0 )); then
+			setup_port_ana "$p" 1 "optimized"
+		elif (( portno == 1 )); then
+			setup_port_ana "$p" 1 "non-optimized"
+		else
+			setup_port_ana "$p" 1 "inaccessible"
+		fi
+		portno=$(( portno + 1 ))
+	done
+}
+
+# Failover state:
+#   port 2 = optimized, port 3 = non-optimized, ports 0-1 = inaccessible
+ana_failover() {
+	local portno=0
+	local p
+	for p in "$@"; do
+		if (( portno == 2 )); then
+			setup_port_ana "$p" 1 "optimized"
+		elif (( portno == 3 )); then
+			setup_port_ana "$p" 1 "non-optimized"
+		else
+			setup_port_ana "$p" 1 "inaccessible"
+		fi
+		portno=$(( portno + 1 ))
+	done
+}
+
 setup_nvmet_port_marginal() {
 	local port="$1"
 	local state="$2"
@@ -949,7 +985,47 @@ run_tests "$(_find_nvme_subsys "${SUBSYSNQN}")" "${PORTS[@]}"
 
 next_step
 
-# ── 12. Stop fio ─────────────────────────────────────────────────────────
+# ── 12. ANA failover ─────────────────────────────────────────────────────
+
+echo "ANA failover"
+ana_failover "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 13. ANA failback ─────────────────────────────────────────────────────
+
+echo "ANA failback"
+ana_failback "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 14. ANA failover ─────────────────────────────────────────────────────
+
+echo "ANA failover"
+ana_failover "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 15. ANA failback ─────────────────────────────────────────────────────
+
+echo "ANA failback"
+ana_failback "${PORTS[@]}"
+
+sleep 2
+nvme list-subsys /dev/${NS}
+
+next_step
+
+# ── 16. Stop fio ─────────────────────────────────────────────────────────
 
 echo "Stopping background I/O"
 if kill -0 "${FIO_PID}" 2>/dev/null; then
@@ -958,7 +1034,7 @@ if kill -0 "${FIO_PID}" 2>/dev/null; then
 fi
 unset FIO_PID
 
-# ── 13. Disconnect and tear down ─────────────────────────────────────────
+# ── 17. Disconnect and tear down ─────────────────────────────────────────
 
 nvme_disconnect
 
