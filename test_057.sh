@@ -686,7 +686,7 @@ run_test() {
 	local HOSTS_POS
 
 	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
-		HOSTS_POS+="$(( RPORTS_CNT + PATHS_POS ))"
+		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
 		RPORTS_PATHS+=("${ARGS[$PATHS_POS]}")
 		RPORTS_HOSTS+=("${ARGS[$HOSTS_POS]}")
 	done
