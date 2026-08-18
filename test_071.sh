@@ -86,7 +86,7 @@ NUM_HOST_PORTS=2
 
 # ── Identity constants (matching blktests defaults) ─────────────────────────
 
-SESSION_NAME="test_057_mon"
+SESSION_NAME="test_071_mon"
 SUBSYSNQN="blktests-subsystem-1"
 SUBSYS_UUID="91fdba0d-f87b-4c25-b80f-db7be1418b9e"
 HOSTID="0f01fb42-9f7f-4856-b0b3-51e60b8de349"
@@ -366,11 +366,13 @@ wait_for_ns() {
 }
 
 create_tmux_session()  {
-	rm -f test_057_tmux.sh
-	cat << EOF >> test_057_tmux.sh
+	rm -f test_071_tmux.sh
+	cat << EOF >> test_071_tmux.sh
 #!/bin/bash
 tmux new-session -d -s "$SESSION_NAME" "watch -t -d 'nvme list-subsys /dev/${NS}'"
 tmux split-window -v -t "$SESSION_NAME" "iostat -x ID $(cat /proc/diskstats | grep "${CTRL}" | awk '{print $3}'  | sed -z 's/\n/ /g') 4"
+tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/${CTRL}*/inflight'"
+tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/${CTRL}*/stat'"
 sleep 1
 echo ""
 echo "Using \"tmux attach\" to connect to tmux session"
@@ -378,7 +380,7 @@ echo ""
 sleep 1
 tmux attach
 EOF
-	chmod 777 test_057_tmux.sh
+	chmod 777 test_071_tmux.sh
 }
 
 # ── Marginal path helpers (from nvme/070) ──────────────────────────────────
@@ -978,10 +980,12 @@ NS=$(wait_for_ns)
 echo "  Namespace found: /dev/${NS}"
 CTRL="${NS::-2}"
 echo "  Controller found: ${CTRL}"
-
-# ── 10. Start fio background I/O ──────────────────────────────────────────
+SUBSYS_N="${CTRL:4}"
+echo "  SubsysN: ${SUBSYS_N}"
 
 next_step
+
+# ── 10. Start fio background I/O ──────────────────────────────────────────
 
 echo "Starting background I/O"
 fio --name=verify \
@@ -1001,12 +1005,12 @@ fio --name=verify \
 FIO_PID=$!
 echo "  fio started (pid=${FIO_PID}), runtime=${FIO_RUNTIME}"
 
-sleep 10
+sleep 1
 
 create_tmux_session
 
 echo ""
-echo "Use \"./test_057_tmux.sh\" to start tmux in separate window"
+echo "Use \"sudo ./test_071_tmux.sh\" to start tmux in separate window"
 echo ""
 
 next_step
