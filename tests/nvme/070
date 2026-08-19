@@ -553,6 +553,8 @@ test() {
 	local -a ports
 	local ns
 	local fio_pid
+	local -i first_host1=0
+	local -i first_host2=0
 
 	echo "Running ${TEST_NAME}"
 
@@ -570,11 +572,19 @@ test() {
 	_get_nvmet_ports "${def_subsysnqn}" ports
 
 	for port in "${ports[@]}"; do
+		_setup_nvmet_port_ana "${port}" 1 "non-optimized"
 		if [[ $(_get_fc_host_port "${port}") == 0 ]]; then
-			_setup_nvmet_port_ana "${port}" 1 "optimized"
+			if [ $first_host1 -eq 1 ]; then
+				continue
+			fi
+			first_host1=1
 		else
-			_setup_nvmet_port_ana "${port}" 1 "non-optimized"
+			if [ $first_host2 -eq 1 ]; then
+				continue
+			fi
+			first_host2=1
 		fi
+		_setup_nvmet_port_ana "${port}" 1 "optimized"
 	done
 
 	for port in "${ports[@]}"; do
