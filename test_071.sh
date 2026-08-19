@@ -135,7 +135,6 @@ next_step() {
 list_subsys_interactive () {
 	if [[ ! -z "$INTERACTIVE" ]]; then
 		nvme list-subsys /dev/${NS}
-		next_step
 	fi
 }
 
@@ -387,7 +386,7 @@ make_tmux_session() {
 tmux new-session -d -s "$SESSION_NAME" "watch -t -d 'nvme list-subsys /dev/${NS}'"
 tmux split-window -v -t "$SESSION_NAME" "iostat -x ID $(cat /proc/diskstats | grep "${CTRL}" | awk '{print $3}'  | sed -z 's/\n/ /g') 4"
 tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/${CTRL}*/inflight'"
-tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/${CTRL}*/stat'"
+tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/state'"
 sleep 1
 echo ""
 echo "Using \"tmux attach\" to connect to tmux session"
@@ -481,11 +480,13 @@ _rport_check_online() {
 	if [[ "$STATE" == "Online" ]]; then
 		if ! _rport_is_online "$RPORT"; then
 			echo  FC port \("$RPORT"\) is not online, expteced online.
+			next_step
 			return 1
 		fi
 	else
 		if ! _rport_is_marginal "$RPORT"; then
 			echo FC port \("$RPORT"\) is not marginal, expteced marginal.
+			next_step
 			return 1
 		fi
 	fi
@@ -498,11 +499,13 @@ _rport_check_use() {
 	if [[ "$STATE" == "Online" ]]; then
 		if ! _rport_in_use "$RPORT" ; then
 			echo FC port on \("$RPORT"\) is not being used, expected use.
+			next_step
 			return 1
 		fi
 	else
 		if _rport_in_use "$RPORT" ; then
 			echo FC port on \("$RPORT"\) is being used, expected no use.
+			next_step
 			return 1
 		fi
 	fi
@@ -537,6 +540,7 @@ _rport_check_one_use_online() {
 	done
 
 	echo No FC ports are being used, expected atleast one in use when all are online in numa mode.
+	next_step
 	return 1
 }
 
@@ -558,7 +562,6 @@ test_set_all_online() {
 		done
 	fi
 
-	next_step
 }
 
 test_set_one_host_marginal() {
@@ -584,8 +587,6 @@ test_set_one_host_marginal() {
 			_rport_check_opt "${ARGS[$PATHS_POS]}" "Online" || return 1
 		fi
 	done
-
-	next_step
 }
 
 _rport_check_one_use_marginal() {
@@ -597,6 +598,7 @@ _rport_check_one_use_marginal() {
 	done
 
 	echo No FC ports are being used, expected one in use when all are marginal.
+	next_step
 	return 1
 }
 
@@ -608,8 +610,6 @@ test_set_all_marginal() {
 	done
 
 	_rport_check_one_use_marginal "${RPORTS_PATHS[@]}"
-
-	next_step
 
 }
 
@@ -633,8 +633,6 @@ test_set_one_non_optimized_online() {
 			_rport_check_opt "$subsys_path" Marginal || return 1
 		fi
 	done
-
-	next_step
 
 }
 
@@ -660,8 +658,6 @@ test_set_all_non_optimized_online() {
 			fi
 		fi
 	done
-
-	next_step
 
 }
 
@@ -693,8 +689,6 @@ test_set_all_non_one_optimized_online() {
 		fi
 	done
 
-	next_step
-
 }
 
 test_set_one_optimized_online() {
@@ -707,8 +701,6 @@ test_set_one_optimized_online() {
 			_rport_check_opt "$subsys_path" Marginal || return 1
 		fi
 	done
-
-	next_step
 
 }
 
@@ -734,8 +726,6 @@ test_set_two_optimized_online() {
 			_rport_check "$subsys_path" Marginal || return 1
 		fi
 	done
-
-	next_step
 
 }
 
@@ -1012,8 +1002,6 @@ CTRL="${NS::-2}"
 echo "  Controller found: ${CTRL}"
 SUBSYS_N="${CTRL:4}"
 echo "  SubsysN: ${SUBSYS_N}"
-
-next_step
 
 # ── 10. Start fio background I/O ──────────────────────────────────────────
 
