@@ -411,7 +411,7 @@ _subsys_get_port() {
 	local RPORT=$1
 	local port
 	local address
-
+	echo "_subsys_get_port ${RPORT}" >&2
 	address=$(_subsys_rport_addr "$RPORT")
 	port=$(echo "$address" | sed -n 's/.*pn-\(.*\),.*/\1/p')
 	echo $(( port - $(remote_wwpn 0) ))
@@ -421,42 +421,47 @@ _rport_set_iopolicy() {
 	local RPORT=$1
 	local POLICY=$2
 
+    echo "_rport_set_iopolicy $RPORT to $POLICY"
 	echo "$POLICY" | sudo tee "$RPORT"/iopolicy > /dev/null
 }
 
 _rport_set_marginal() {
 	local RPORT=$1
-
+    echo "_rport_set_marignal ${RPORT}"
 	setup_nvmet_port_marginal "$(_subsys_get_port "$RPORT")" "marginal"
 }
 
 _rport_set_online() {
 	local RPORT=$1
-
+    echo "_rport_set_online ${RPORT}"
 	setup_nvmet_port_marginal "$(_subsys_get_port "$RPORT")" "live"
 }
 
 _rport_is_online() {
 	local RPORT=$1
-
+    echo "_rport_is_online ${RPORT}"
+	grep . ${RPORT}/state
 	[[ "$(cat "$RPORT"/state)" == "live" ]]
 }
 
 _rport_is_marginal() {
 	local RPORT=$1
-
+    echo "_rport_is_marginal ${RPORT}"
+	grep . ${RPORT}/state
 	[[ "$(cat "$RPORT"/state)" == "marginal" ]]
 }
 
 _rport_in_use() {
 	local SUBSYS_PATH=$1
-
+	sleep 2
+    echo "_rport_in_use ${SUBSYS_PATH}"
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/stat | awk '{print $9}')" != "0" ]]
 }
 
 _rport_optimized() {
 	local SUBSYS_PATH=$1
-
+    echo "_rport_optimized ${SUBSYS_PATH}"
+	grep . ${SUBSYS_PATH}/nvme*/ana_state
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/ana_state)" == "optimized" ]]
 }
 
