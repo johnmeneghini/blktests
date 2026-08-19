@@ -123,6 +123,13 @@ next_step() {
 	fi
 }
 
+list_subsys_interactive () {
+	if [[ ! -z "$INTERACTIVE" ]]; then
+		nvme list-subsys /dev/${NS}
+		next_step
+	fi
+}
+
 die() {
 	echo "FAIL: $*" >&2
 	exit 1
@@ -365,8 +372,7 @@ wait_for_ns() {
 	echo "${ns}"
 }
 
-create_tmux_session()  {
-	rm -f test_071_tmux.sh
+make_tmux_session() {
 	cat << EOF >> test_071_tmux.sh
 #!/bin/bash
 tmux new-session -d -s "$SESSION_NAME" "watch -t -d 'nvme list-subsys /dev/${NS}'"
@@ -381,6 +387,16 @@ sleep 1
 tmux attach
 EOF
 	chmod 777 test_071_tmux.sh
+	echo ""
+	echo "Use \"sudo ./test_071_tmux.sh\" to start tmux in separate window"
+	echo ""
+}
+
+create_tmux_session() {
+	rm -f test_071_tmux.sh
+	if [[ ! -z "$INTERACTIVE" ]]; then
+		make_tmux_session
+	fi
 }
 
 # ── Marginal path helpers (from nvme/070) ──────────────────────────────────
@@ -500,7 +516,7 @@ _rport_check() {
 
 _rport_check_one_use_online() {
 	local -a RPORTS_PATHS=("$@")
-
+    sleep 2
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
 		_rport_check_online "$subsys_path" Online || continue
 		! _rport_in_use "$subsys_path" || return 0
@@ -1009,10 +1025,6 @@ sleep 1
 
 create_tmux_session
 
-echo ""
-echo "Use \"sudo ./test_071_tmux.sh\" to start tmux in separate window"
-echo ""
-
 next_step
 
 # ── 11. Run marginal path tests ──────────────────────────────────────────
@@ -1020,60 +1032,35 @@ next_step
 echo "Run marginal path tests"
 run_tests "$(_find_nvme_subsys "${SUBSYSNQN}")" "${PORTS[@]}"
 
-sleep 2
-nvme list-subsys /dev/${NS}
-
-next_step
+list_subsys_interactive
 
 # ── 12. ANA failover ─────────────────────────────────────────────────────
 
 echo "ANA failover"
 ana_failover "${PORTS[@]}"
 
-sleep 2
-nvme list-subsys /dev/${NS}
+list_subsys_interactive
 
-next_step
+# ── 13. Run marginal path tests ──────────────────────────────────────────
 
-# ── 11. Run marginal path tests ──────────────────────────────────────────
-
-echo "Run marginal path tests"
+echo "Run marginal path tests after ANA failover"
 run_tests "$(_find_nvme_subsys "${SUBSYSNQN}")" "${PORTS[@]}"
 
-sleep 2
-nvme list-subsys /dev/${NS}
+list_subsys_interactive
 
-next_step
-
-# ── 13. ANA failback ─────────────────────────────────────────────────────
+# ── 14. ANA failback ─────────────────────────────────────────────────────
 
 echo "ANA failback"
 ana_failback "${PORTS[@]}"
 
-sleep 2
-nvme list-subsys /dev/${NS}
+list_subsys_interactive
 
-next_step
+# ── 15. Run marginal path tests ──────────────────────────────────────────
 
-# ── 14. ANA failover ─────────────────────────────────────────────────────
+echo "Run marginal path tests after ANA failback"
+run_tests "$(_find_nvme_subsys "${SUBSYSNQN}")" "${PORTS[@]}"
 
-echo "ANA failover"
-ana_failover "${PORTS[@]}"
-
-sleep 2
-nvme list-subsys /dev/${NS}
-
-next_step
-
-# ── 15. ANA failback ─────────────────────────────────────────────────────
-
-echo "ANA failback"
-ana_failback "${PORTS[@]}"
-
-sleep 2
-nvme list-subsys /dev/${NS}
-
-next_step
+list_subsys_interactive
 
 # ── 16. Stop fio ─────────────────────────────────────────────────────────
 
