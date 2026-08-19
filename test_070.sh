@@ -76,6 +76,8 @@ fi
 
 set -euo pipefail
 
+TIMEOUT=10
+
 # ── Tunables ────────────────────────────────────────────────────────────────
 
 IMG_SIZE="1G"
@@ -382,28 +384,72 @@ _rport_set_online() {
 	setup_nvmet_port_marginal "$(_subsys_get_port "$RPORT")" "live"
 }
 
-_rport_is_online() {
+_rport_is_online_raw() {
 	local RPORT=$1
 
 	[[ "$(cat "$RPORT"/state)" == "live" ]]
 }
 
-_rport_is_marginal() {
+_rport_is_marginal_raw() {
 	local RPORT=$1
 
 	[[ "$(cat "$RPORT"/state)" == "marginal" ]]
 }
 
-_rport_in_use() {
+_rport_in_use_raw() {
 	local SUBSYS_PATH=$1
 
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/stat | awk '{print $9}')" != "0" ]]
 }
 
-_rport_optimized() {
+_rport_is_optimized() {
 	local SUBSYS_PATH=$1
 
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/ana_state)" == "optimized" ]]
+}
+
+_rport_is_online() {
+	local RPORT=$1
+	local -i time_passed=0
+
+	for (( time_passed=0; time_passed < TIMEOUT; time_passed++ )); do
+		_rport_is_online_raw "$RPORT" && return 0 || true
+		sleep 1
+	done
+	return 1
+}
+
+_rport_is_marginal() {
+	local RPORT=$1
+	local -i time_passed=0
+
+	for (( time_passed=0; time_passed < TIMEOUT; time_passed++ )); do
+		_rport_is_marginal_raw "$RPORT" && return 0 || true
+		sleep 1
+	done
+	return 1
+}
+
+_rport_in_use() {
+	local RPORT=$1
+	local -i time_passed=0
+
+	for (( time_passed=0; time_passed < TIMEOUT; time_passed++ )); do
+		_rport_in_use_raw "$RPORT" && return 0 || true
+		sleep 1
+	done
+	return 1
+}
+
+_rport_not_in_use() {
+	local RPORT=$1
+	local -i time_passed=0
+
+	for (( time_passed=0; time_passed < TIMEOUT; time_passed++ )); do
+		_rport_in_use_raw "$RPORT" || return 0
+		sleep 1
+	done
+	return 1
 }
 
 _rport_check_online() {
@@ -433,22 +479,20 @@ _rport_check_use() {
 			return 1
 		fi
 	else
-		if _rport_in_use "$RPORT" ; then
+		if ! _rport_not_in_use "$RPORT" ; then
 			echo FC port on \("$RPORT"\) is being used, expected no use.
 			return 1
 		fi
 	fi
 }
 
-_rport_check_opt() {
+_rport_check_use_opt() {
 	local RPORT=$1
-	local STATE=$2
 
-	_rport_check_online "$RPORT" "$STATE"
-	if _rport_optimized "$RPORT"; then
-		_rport_check_use "$RPORT" "$STATE"
+	if _rport_is_optimized "$RPORT"; then
+		_rport_check_use "$RPORT" "Online" || return 1
 	else
-		_rport_check_use "$RPORT" Marginal
+		_rport_check_use "$RPORT" "Marginal" || return 1
 	fi
 }
 
@@ -456,19 +500,43 @@ _rport_check() {
 	local RPORT=$1
 	local STATE=$2
 
-	_rport_check_online "$RPORT" "$STATE"
+	_rport_check_online "$RPORT" "$STATE" || return 1
 	_rport_check_use "$RPORT" "$STATE"
 }
 
-_rport_check_one_use_online() {
+_rport_num_in_use() {
 	local -a RPORTS_PATHS=("$@")
+	local -i num_in_use=0
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		_rport_check_online "$subsys_path" Online || continue
-		! _rport_in_use "$subsys_path" || return 0
+		_rport_in_use_raw "$subsys_path" || continue
+		num_in_use=$((num_in_use + 1))
 	done
 
-	echo No FC ports are being used, expected atleast one in use when all are online in numa mode.
+	echo "$num_in_use"
+}
+
+_rport_check_one_use() {
+	local STATE=$1
+	shift
+	local -a RPORTS_PATHS=("$@")
+	local -i time_passed=0
+	local -i count_in_use=0
+
+	for (( time_passed=0; time_passed < TIMEOUT; time_passed++ )); do
+		count_in_use=$(_rport_num_in_use "${RPORTS_PATHS[@]}")
+		if [ $count_in_use -eq 1 ]; then
+			return 0
+		fi
+		sleep 1
+	done
+
+	if [ $count_in_use -gt 1 ]; then
+		echo More than one FC port is being used, expected only one in use when all are "$STATE" in numa mode.
+		return 1
+	fi
+
+	echo No FC ports are being used, expected atleast one in use when all are "$STATE" in numa mode.
 	return 1
 }
 
@@ -483,10 +551,10 @@ test_set_all_online() {
 	done
 
 	if [ "$IOPOLICY" == "numa" ]; then
-		_rport_check_one_use_online "${RPORTS_PATHS[@]}" || return 1
+		_rport_check_one_use "online" "${RPORTS_PATHS[@]}" || return 1
 	else
 		for subsys_path in "${RPORTS_PATHS[@]}"; do
-			_rport_check_opt "$subsys_path" Online || return 1
+			_rport_check_use_opt "$subsys_path" || return 1
 		done
 	fi
 }
@@ -509,23 +577,12 @@ test_set_one_host_marginal() {
 	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
 		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
 		if [[ "${ARGS[$HOSTS_POS]}" == "$HOST" ]]; then
-			_rport_check_opt "${ARGS[$PATHS_POS]}" "Marginal" || return 1
+			_rport_check "${ARGS[$PATHS_POS]}" "Marginal" || return 1
 		else
-			_rport_check_opt "${ARGS[$PATHS_POS]}" "Online" || return 1
+			_rport_check_online "${ARGS[$PATHS_POS]}" "Online" || return 1
+			_rport_check_use_opt "${ARGS[$PATHS_POS]}" || return 1
 		fi
 	done
-}
-
-_rport_check_one_use_marginal() {
-	local -a RPORTS_PATHS=("$@")
-
-	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		_rport_check_online "$subsys_path" Marginal
-		! _rport_in_use "$subsys_path" || return 0
-	done
-
-	echo No FC ports are being used, expected one in use when all are marginal.
-	return 1
 }
 
 test_set_all_marginal() {
@@ -533,9 +590,16 @@ test_set_all_marginal() {
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
 		_rport_set_marginal "$subsys_path" || return 1
+		_rport_check_online "$subsys_path" Marginal || return 1
 	done
 
-	_rport_check_one_use_marginal "${RPORTS_PATHS[@]}"
+	if [ "$IOPOLICY" == "numa" ]; then
+		_rport_check_one_use "marginal" "${RPORTS_PATHS[@]}" || return 1
+	else
+		for subsys_path in "${RPORTS_PATHS[@]}"; do
+			_rport_check_use_opt "$subsys_path" Marginal || return 1
+		done
+	fi
 }
 
 test_set_one_non_optimized_online() {
@@ -543,7 +607,7 @@ test_set_one_non_optimized_online() {
 
 	local next_marginal=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if ! _rport_optimized "$subsys_path"; then
+		if ! _rport_is_optimized "$subsys_path"; then
 			if [ $next_marginal == 1 ]; then
 				_rport_check "$subsys_path" Marginal || return 1
 				break
@@ -554,8 +618,8 @@ test_set_one_non_optimized_online() {
 		fi
 	done
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if _rport_optimized "$subsys_path"; then
-			_rport_check_opt "$subsys_path" Marginal || return 1
+		if _rport_is_optimized "$subsys_path"; then
+			_rport_check "$subsys_path" Marginal || return 1
 		fi
 	done
 }
@@ -567,7 +631,7 @@ test_set_all_non_optimized_online() {
 
 	local numa_in_use=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if _rport_optimized "$subsys_path"; then
+		if _rport_is_optimized "$subsys_path"; then
 			_rport_check "$subsys_path" Marginal || return 1
 		else
 			_rport_set_online "$subsys_path" || return 1
@@ -589,7 +653,7 @@ set_one_optimized_online() {
 
 	local next_marginal=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if _rport_optimized "$subsys_path"; then
+		if _rport_is_optimized "$subsys_path"; then
 			if [ $next_marginal == 1 ]; then
 				_rport_check "$subsys_path" Marginal || return 1
 				break
@@ -607,8 +671,9 @@ test_set_all_non_one_optimized_online() {
 	set_one_optimized_online "${RPORTS_PATHS[@]}" || return 1
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if ! _rport_optimized "$subsys_path"; then
-			_rport_check_opt "$subsys_path" Online || return 1
+		if ! _rport_is_optimized "$subsys_path"; then
+			_rport_check_online "$subsys_path" Online || return 1
+			_rport_check_use "$subsys_path" Marginal || return 1
 		fi
 	done
 }
@@ -619,8 +684,8 @@ test_set_one_optimized_online() {
 	set_one_optimized_online "${RPORTS_PATHS[@]}" || return 1
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if ! _rport_optimized "$subsys_path"; then
-			_rport_check_opt "$subsys_path" Marginal || return 1
+		if ! _rport_is_optimized "$subsys_path"; then
+			_rport_check "$subsys_path" "Marginal" || return 1
 		fi
 	done
 }
@@ -632,7 +697,7 @@ test_set_two_optimized_online() {
 
 	local numa_in_use=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if _rport_optimized "$subsys_path"; then
+		if _rport_is_optimized "$subsys_path"; then
 			_rport_set_online "$subsys_path" || return 1
 			if [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 0 ]; then
 				_rport_check "$subsys_path" Online || return 1
@@ -899,14 +964,20 @@ echo "  Host allowed: ${HOSTNQN}"
 
 # ── 8. Set ANA states (host_port 0 = optimized, host_port 1 = non-optimized) ─
 
+first_host0=0
+first_host1=0
 for p in "${PORTS[@]}"; do
+	setup_port_ana "$p" 1 "non-optimized"
 	if [[ $(get_fc_host_port "${p}") == 0 ]]; then
-		setup_port_ana "$p" 1 "optimized"
+		if [[ $first_host0 -eq 1 ]]; then continue; fi
+		first_host0=1
 	else
-		setup_port_ana "$p" 1 "non-optimized"
+		if [[ $first_host1 -eq 1 ]]; then continue; fi
+		first_host1=1
 	fi
+	setup_port_ana "$p" 1 "optimized"
 done
-echo "  ANA states set (host_port 0=optimized, host_port 1=non-optimized)"
+echo "  ANA states set (one optimized per host port, rest non-optimized)"
 
 # ── 9. Connect host to all 4 ports ────────────────────────────────────────
 
