@@ -66,15 +66,24 @@
 #    - The loop block device and backing file are cleaned up
 # ---------------------------------------------------------------------------
 
-INTERACTIVE=$1
-if [[ -n "${INTERACTIVE}" ]]; then
-    if [[ ! "$INTERACTIVE" == "-i" ]]; then
-        echo "  Invalid argument \"$1\""
-        exit 2
-    fi
-fi
+INTERACTIVE=""
+VERBOSE=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-i) INTERACTIVE="-i"; shift ;;
+		-v) VERBOSE="-v"; shift ;;
+		*)  echo "  Invalid argument \"$1\""; exit 2 ;;
+	esac
+done
 
 set -euo pipefail
+
+verbose_print() {
+	if [[ -n "${VERBOSE}" ]]; then
+		echo "$@" >&2
+	fi
+}
 
 TIMEOUT=10
 
@@ -359,6 +368,7 @@ _subsys_get_port() {
 	local RPORT=$1
 	local port
 	local address
+	verbose_print "_subsys_get_port ${RPORT}"
 
 	address=$(_subsys_rport_addr "$RPORT")
 	port=$(echo "$address" | sed -n 's/.*pn-\(.*\),.*/\1/p')
@@ -368,42 +378,52 @@ _subsys_get_port() {
 _rport_set_iopolicy() {
 	local RPORT=$1
 	local POLICY=$2
+	verbose_print "_rport_set_iopolicy $RPORT to $POLICY"
 
 	echo "$POLICY" | sudo tee "$RPORT"/iopolicy > /dev/null
 }
 
 _rport_set_marginal() {
 	local RPORT=$1
+	verbose_print "_rport_set_marginal ${RPORT}"
 
 	setup_nvmet_port_marginal "$(_subsys_get_port "$RPORT")" "marginal"
 }
 
 _rport_set_online() {
 	local RPORT=$1
+	verbose_print "_rport_set_online ${RPORT}"
 
 	setup_nvmet_port_marginal "$(_subsys_get_port "$RPORT")" "live"
 }
 
 _rport_is_online_raw() {
 	local RPORT=$1
+	verbose_print "_rport_is_online_raw ${RPORT}"
+	verbose_print "$(grep . ${RPORT}/state)"
 
 	[[ "$(cat "$RPORT"/state)" == "live" ]]
 }
 
 _rport_is_marginal_raw() {
 	local RPORT=$1
+	verbose_print "_rport_is_marginal_raw ${RPORT}"
+	verbose_print "$(grep . ${RPORT}/state)"
 
 	[[ "$(cat "$RPORT"/state)" == "marginal" ]]
 }
 
 _rport_in_use_raw() {
 	local SUBSYS_PATH=$1
+	verbose_print "_rport_in_use_raw ${SUBSYS_PATH}"
 
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/stat | awk '{print $9}')" != "0" ]]
 }
 
 _rport_is_optimized() {
 	local SUBSYS_PATH=$1
+	verbose_print "_rport_is_optimized ${SUBSYS_PATH}"
+	verbose_print "$(grep . ${SUBSYS_PATH}/nvme*/ana_state)"
 
 	[[ "$(cat "$SUBSYS_PATH"/nvme*/ana_state)" == "optimized" ]]
 }
