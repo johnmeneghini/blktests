@@ -313,12 +313,13 @@ wait_for_ns() {
 	echo "${ns}"
 }
 
-create_tmux_session()  {
-	rm -f test_057_tmux.sh
+make_tmux_session() {
 	cat << EOF >> test_057_tmux.sh
 #!/bin/bash
 tmux new-session -d -s "$SESSION_NAME" "watch -t -d 'nvme list-subsys /dev/${NS}'"
 tmux split-window -v -t "$SESSION_NAME" "iostat -x ID $(cat /proc/diskstats | grep "${CTRL}" | awk '{print $3}'  | sed -z 's/\n/ /g') 4"
+tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/${CTRL}*/inflight'"
+#tmux split-window -v -t "$SESSION_NAME" "watch -t -d 'grep . /sys/class/nvme-subsystem/nvme-subsys${SUBSYS_N}/nvme*/state'"
 sleep 1
 echo ""
 echo "Using \"tmux attach\" to connect to tmux session"
@@ -327,17 +328,36 @@ sleep 1
 tmux attach
 EOF
 	chmod 777 test_057_tmux.sh
+	echo ""
+	echo "Use \"sudo ./test_057_tmux.sh\" to start tmux in separate window"
+	echo ""
+	echo "Use \"xterm -e sudo fio --name=80Grandreadwrite --filename /dev/${NS} --rw=randrw --bs=4096 --direct=1 --unlink=0 --iodepth=32 --ioengine=libaio --scramble_buffers=1 --randrepeat=1 --norandommap --size=80G --time_based=1 --runtime=86400s &\""
+	echo ""
 }
+
+create_tmux_session() {
+	rm -f test_071_tmux.sh
+	if [[ ! -z "$INTERACTIVE" ]]; then
+		make_tmux_session
+	fi
+}
+
 
 # ── Cleanup (called on exit) ───────────────────────────────────────────────
 
 cleanup() {
 	local p
 
-	# Stop fio if still running
-	if [[ -n "${FIO_PID:-}" ]] && kill -0 "${FIO_PID}" 2>/dev/null; then
-		kill "${FIO_PID}" 2>/dev/null
-		wait "${FIO_PID}" 2>/dev/null || true
+	echo "cleanup"
+	if [[ ! -z "$INTERACTIVE" ]]; then
+		echo "Stop FIO"
+		next_step
+	else
+		# Stop fio if still running
+		if [[ -n "${FIO_PID:-}" ]] && kill -0 "${FIO_PID}" 2>/dev/null; then
+			kill "${FIO_PID}" 2>/dev/null
+			wait "${FIO_PID}" 2>/dev/null || true
+		fi
 	fi
 
 	# Disconnect host
@@ -446,11 +466,13 @@ done
 
 create_host
 echo "  Host allowed: ${HOSTNQN}"
+next_step
 
 # ── 7. Set initial ANA states (failback: port0=opt, port1=non-opt, rest=inacc) ─
 
 ana_failback "${PORTS[@]}"
 echo "  ANA initial state set (failback)"
+next_step
 
 # ── 8. Connect host to all 4 ports ────────────────────────────────────────
 
@@ -458,51 +480,50 @@ for p in "${PORTS[@]}"; do
 	nvme_connect_port "$p"
 done
 echo "  Connected to ${NUM_PORTS} ports"
+next_step
 
 # Wait for the multipath namespace to appear
 NS=$(wait_for_ns)
 echo "  Namespace found: /dev/${NS}"
 CTRL="${NS::-2}"
 echo "  Controller found: ${CTRL}"
+SUBSYS_N="${CTRL:4}"
+echo "  SubsysN: ${SUBSYS_N}"
 
 # ── 9. Start fio background I/O ──────────────────────────────────────────
 
-next_step
-
-fio --name=verify \
-	--rw=randwrite \
-	--direct=1 \
-	--ioengine=libaio \
-	--bs=4k \
-	--iodepth=16 \
-	--verify=crc32c \
-	--verify_state_save=0 \
-	--filename="/dev/${NS}" \
-	--group_reporting \
-	--ramp_time="${FIO_RAMP}" \
-	--time_based \
-	--runtime="${FIO_RUNTIME}" \
-	--output="${TMPDIR}/fio.log" > /dev/null 2>&1 &
-FIO_PID=$!
-echo "  fio started (pid=${FIO_PID}), runtime=${FIO_RUNTIME}"
-
-sleep 2
+if [[ -z "$INTERACTIVE" ]]; then
+	echo "Starting background I/O"
+	fio --name=verify \
+		--rw=randwrite \
+		--direct=1 \
+		--ioengine=libaio \
+		--bs=4k \
+		--iodepth=16 \
+		--verify=crc32c \
+		--verify_state_save=0 \
+		--filename="/dev/${NS}" \
+		--group_reporting \
+		--ramp_time="${FIO_RAMP}" \
+		--time_based \
+		--runtime="${FIO_RUNTIME}" \
+		--output="${TMPDIR}/fio.log" > /dev/null 2>&1 &
+	FIO_PID=$!
+	echo "  fio started (pid=${FIO_PID}), runtime=${FIO_RUNTIME}"
+fi
 
 create_tmux_session
 
-echo ""
-echo "Use \"./test_057_tmux.sh\" to start tmux in separate window"
-echo ""
-
 next_step
 
 # ── 10. ANA failover ─────────────────────────────────────────────────────
 
 echo "ANA failover"
 ana_failover "${PORTS[@]}"
-
-sleep 2
+if [[ -z "$INTERACTIVE" ]]; then
 nvme list-subsys /dev/${NS}
+sleep 2
+fi
 
 next_step
 
@@ -510,9 +531,10 @@ next_step
 
 echo "ANA failback"
 ana_failback "${PORTS[@]}"
-
-sleep 2
+if [[ -z "$INTERACTIVE" ]]; then
 nvme list-subsys /dev/${NS}
+sleep 2
+fi
 
 next_step
 
@@ -520,9 +542,10 @@ next_step
 
 echo "ANA failover"
 ana_failover "${PORTS[@]}"
-
-sleep 2
+if [[ -z "$INTERACTIVE" ]]; then
 nvme list-subsys /dev/${NS}
+sleep 2
+fi
 
 next_step
 
@@ -530,19 +553,23 @@ next_step
 
 echo "ANA failback"
 ana_failback "${PORTS[@]}"
-
-sleep 2
+if [[ -z "$INTERACTIVE" ]]; then
 nvme list-subsys /dev/${NS}
-
-next_step
+sleep 2
+fi
 
 # ── 12. Stop fio ─────────────────────────────────────────────────────────
 
-if kill -0 "${FIO_PID}" 2>/dev/null; then
-	kill "${FIO_PID}" 2>/dev/null
-	wait "${FIO_PID}" 2>/dev/null || true
+if [[ -z "$INTERACTIVE" ]]; then
+	if kill -0 "${FIO_PID}" 2>/dev/null; then
+		kill "${FIO_PID}" 2>/dev/null
+		wait "${FIO_PID}" 2>/dev/null || true
+	fi
+	unset FIO_PID
+else
+	echo "Stop FIO"
+	next_step
 fi
-unset FIO_PID
 
 # ── 13. Disconnect and tear down ─────────────────────────────────────────
 
