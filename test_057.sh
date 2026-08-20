@@ -348,6 +348,7 @@ create_tmux_session() {
 cleanup() {
 	local p
 
+	set +e
 	echo "cleanup"
 	if [[ ! -z "$INTERACTIVE" ]]; then
 		echo "Stop FIO"
@@ -422,6 +423,11 @@ preflight() {
 # ══════════════════════════════════════════════════════════════════════════════
 
 preflight
+
+# Clean up any leftover state from a previous interrupted run
+cleanup 2>/dev/null || true
+set -euo pipefail
+
 trap cleanup EXIT
 
 echo "Running nvme/057 - test nvme fabrics controller ANA failover during I/O"
